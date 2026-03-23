@@ -1,0 +1,1669 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>MATHBATTLE</title>
+<!--
+══════════════════════════════════════════════
+  SUPABASE SQL — выполни ВСЁ это один раз
+══════════════════════════════════════════════
+
+create table if not exists mb_players (
+  id uuid primary key default gen_random_uuid(),
+  username text unique not null,
+  password_hash text not null,
+  elo int default 1000,
+  wins int default 0,
+  losses int default 0,
+  created_at timestamptz default now()
+);
+
+create table if not exists mb_rooms (
+  id text primary key,
+  host_id uuid references mb_players(id),
+  guest_id uuid references mb_players(id),
+  host_username text,
+  guest_username text,
+  host_elo int default 1000,
+  guest_elo int default 1000,
+  mode text default 'arithmetic',
+  status text default 'waiting',
+  host_score int default 0,
+  guest_score int default 0,
+  created_at timestamptz default now()
+);
+
+create table if not exists mb_matches (
+  id uuid primary key default gen_random_uuid(),
+  winner_id uuid references mb_players(id),
+  loser_id uuid references mb_players(id),
+  winner_username text,
+  loser_username text,
+  mode text,
+  score_winner int,
+  score_loser int,
+  elo_change int,
+  played_at timestamptz default now()
+);
+
+create table if not exists mb_chat (
+  id uuid primary key default gen_random_uuid(),
+  player_id uuid references mb_players(id),
+  username text,
+  elo int default 1000,
+  message text,
+  created_at timestamptz default now()
+);
+
+alter table mb_players enable row level security;
+alter table mb_rooms enable row level security;
+alter table mb_matches enable row level security;
+alter table mb_chat enable row level security;
+create policy "all_mb_players" on mb_players for all using (true) with check (true);
+create policy "all_mb_rooms" on mb_rooms for all using (true) with check (true);
+create policy "all_mb_matches" on mb_matches for all using (true) with check (true);
+create policy "all_mb_chat" on mb_chat for all using (true) with check (true);
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;user-select:none;}
+:root{
+  --bg:#080808;
+  --bg2:#0f0f0f;
+  --bg3:#161616;
+  --bg4:#1e1e1e;
+  --border:#222;
+  --border2:#2a2a2a;
+  --acc:#e8ff00;
+  --acc2:#b8cc00;
+  --red:#ff3535;
+  --green:#00e87a;
+  --blue:#3580ff;
+  --text:#f0f0f0;
+  --text2:#888;
+  --text3:#444;
+  --gold:#ffd700;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--text);}
+
+/* ═══ LAYOUT ═══ */
+#app{width:100%;height:100%;display:flex;flex-direction:column;}
+#topbar{
+  height:52px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;
+}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:26px;color:var(--acc);letter-spacing:2px;cursor:pointer;}
+.logo span{color:var(--text2);font-size:16px;letter-spacing:0;}
+#nav-tabs{display:flex;gap:2px;margin-left:8px;}
+.nav-tab{
+  padding:6px 14px;font-size:12px;font-weight:600;color:var(--text2);
+  cursor:pointer;border-radius:6px;transition:all .15s;letter-spacing:.5px;
+  text-transform:uppercase;
+}
+.nav-tab:hover{color:var(--text);background:var(--bg3);}
+.nav-tab.active{color:var(--acc);background:rgba(232,255,0,.08);}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.user-chip{
+  display:flex;align-items:center;gap:8px;background:var(--bg3);
+  border:1px solid var(--border);border-radius:8px;padding:5px 12px;cursor:pointer;
+}
+.user-chip-name{font-size:13px;font-weight:600;}
+.user-chip-elo{font-size:11px;font-weight:700;color:var(--acc);}
+.ping-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);}
+.ping-dot.ok{background:var(--green);}
+
+#body{flex:1;display:flex;overflow:hidden;}
+
+/* ═══ SIDEBAR ═══ */
+#sidebar{
+  width:220px;background:var(--bg2);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
+}
+.sidebar-sec{padding:12px;border-bottom:1px solid var(--border);}
+.sidebar-label{font-size:10px;font-weight:700;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;}
+.mode-card{
+  padding:10px 12px;border-radius:8px;border:1px solid var(--border2);
+  cursor:pointer;margin-bottom:6px;transition:all .15s;
+  display:flex;align-items:center;gap:10px;
+}
+.mode-card:hover{border-color:var(--acc);background:rgba(232,255,0,.04);}
+.mode-card.active{border-color:var(--acc);background:rgba(232,255,0,.08);}
+.mode-icon{
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;
+}
+.mode-name{font-size:13px;font-weight:600;}
+.mode-sub{font-size:10px;color:var(--text2);}
+
+/* ═══ MAIN ═══ */
+#main{flex:1;overflow:hidden;display:flex;flex-direction:column;}
+#content{flex:1;overflow-y:auto;overflow-x:hidden;}
+#content::-webkit-scrollbar{width:3px;}
+#content::-webkit-scrollbar-thumb{background:var(--border2);}
+
+/* ═══ PAGES ═══ */
+.page{display:none;padding:20px;}
+.page.active{display:block;}
+
+/* ═══ ROOMS PAGE ═══ */
+.page-header{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;
+}
+.page-title{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--text);letter-spacing:1px;}
+.btn{
+  padding:9px 18px;border-radius:8px;border:none;font-size:13px;font-weight:700;
+  cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s;letter-spacing:.3px;
+}
+.btn-acc{background:var(--acc);color:#000;}
+.btn-acc:hover{background:var(--acc2);}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2);}
+.btn-ghost:hover{color:var(--text);border-color:var(--text3);}
+.btn-red{background:rgba(255,53,53,.15);color:var(--red);border:1px solid rgba(255,53,53,.2);}
+
+.rooms-grid{display:flex;flex-direction:column;gap:8px;}
+.room-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:14px 16px;display:flex;align-items:center;gap:14px;
+  cursor:pointer;transition:border-color .15s;
+}
+.room-card:hover{border-color:var(--acc);}
+.room-mode-badge{
+  width:40px;height:40px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;font-size:20px;
+  background:var(--bg4);flex-shrink:0;
+}
+.room-info{flex:1;min-width:0;}
+.room-host{font-size:14px;font-weight:700;}
+.room-sub{font-size:12px;color:var(--text2);margin-top:2px;}
+.room-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;}
+.s-waiting{background:rgba(0,232,122,.12);color:var(--green);}
+.s-playing{background:rgba(255,53,53,.12);color:var(--red);}
+
+/* ═══ LEADERBOARD ═══ */
+.lb-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.lb-header{
+  display:grid;grid-template-columns:48px 1fr 90px 60px 60px 70px;
+  padding:10px 16px;border-bottom:1px solid var(--border);
+  font-size:10px;font-weight:700;color:var(--text3);letter-spacing:1px;text-transform:uppercase;
+}
+.lb-row{
+  display:grid;grid-template-columns:48px 1fr 90px 60px 60px 70px;
+  padding:11px 16px;border-bottom:1px solid var(--border);
+  font-size:13px;align-items:center;transition:background .1s;
+}
+.lb-row:last-child{border-bottom:none;}
+.lb-row:hover{background:var(--bg3);}
+.lb-row.me{background:rgba(232,255,0,.04);}
+.lb-rank{font-weight:700;color:var(--text3);font-family:'Space Mono',monospace;font-size:12px;}
+.lb-rank.r1{color:var(--gold);}
+.lb-rank.r2{color:#ccc;}
+.lb-rank.r3{color:#cd7f32;}
+.lb-name-cell{display:flex;align-items:center;gap:8px;}
+.lb-av{
+  width:28px;height:28px;border-radius:50%;background:var(--bg4);border:1px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--acc);flex-shrink:0;
+}
+.lb-elo{font-weight:700;color:var(--acc);font-family:'Space Mono',monospace;}
+.lb-wr{font-weight:600;}
+
+/* ═══ CHAT ═══ */
+#chat-panel{
+  width:280px;background:var(--bg2);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;
+}
+.chat-header{
+  padding:12px 14px;border-bottom:1px solid var(--border);
+  font-size:11px;font-weight:700;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;
+  display:flex;align-items:center;gap:6px;
+}
+.chat-dot{width:6px;height:6px;border-radius:50%;background:var(--green);}
+#chat-messages{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px;}
+#chat-messages::-webkit-scrollbar{width:2px;}
+#chat-messages::-webkit-scrollbar-thumb{background:var(--border2);}
+.chat-msg{font-size:12px;line-height:1.5;}
+.chat-msg-user{font-weight:700;color:var(--acc);margin-right:4px;}
+.chat-msg-elo{font-size:10px;color:var(--text3);margin-right:4px;}
+.chat-msg-text{color:var(--text2);}
+.chat-input-wrap{
+  padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:6px;
+}
+.chat-input{
+  flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;
+  padding:7px 10px;font-size:12px;color:var(--text);outline:none;
+  font-family:'DM Sans',sans-serif;
+}
+.chat-input:focus{border-color:var(--acc);}
+.chat-send{
+  background:var(--acc);border:none;border-radius:6px;padding:7px 12px;
+  font-size:12px;font-weight:700;color:#000;cursor:pointer;font-family:'DM Sans',sans-serif;
+}
+
+/* ═══ AUTH ═══ */
+#auth-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);
+  z-index:1000;display:flex;align-items:center;justify-content:center;
+}
+#auth-overlay.hidden{display:none;}
+.auth-box{
+  width:380px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:16px;padding:32px;display:flex;flex-direction:column;gap:16px;
+}
+.auth-logo{font-family:'Bebas Neue',sans-serif;font-size:36px;color:var(--acc);letter-spacing:3px;}
+.auth-logo span{color:var(--text3);}
+.auth-tabs{display:flex;gap:0;background:var(--bg3);border-radius:8px;padding:3px;}
+.auth-tab{
+  flex:1;text-align:center;padding:7px;font-size:13px;font-weight:600;
+  cursor:pointer;border-radius:6px;color:var(--text3);transition:all .15s;
+}
+.auth-tab.active{background:var(--bg4);color:var(--text);}
+.auth-inp{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:8px;
+  padding:11px 14px;font-size:14px;color:var(--text);outline:none;
+  font-family:'DM Sans',sans-serif;transition:border-color .15s;
+}
+.auth-inp:focus{border-color:var(--acc);}
+.auth-inp::placeholder{color:var(--text3);}
+.auth-err{font-size:12px;color:var(--red);text-align:center;min-height:16px;}
+
+/* ═══ MATCH OVERLAY ═══ */
+#match-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;z-index:500;
+  background:var(--bg);display:flex;flex-direction:column;
+}
+#match-overlay.hidden{display:none;}
+#match-topbar{
+  height:52px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:8px;flex-shrink:0;
+}
+.match-logo{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--acc);letter-spacing:2px;}
+.match-mode-tag{
+  background:rgba(232,255,0,.1);color:var(--acc);font-size:11px;font-weight:700;
+  padding:3px 10px;border-radius:20px;letter-spacing:.5px;
+}
+#match-body{flex:1;display:flex;overflow:hidden;}
+
+/* MATCH LEFT PANEL */
+#match-panel{
+  width:300px;background:var(--bg2);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;
+}
+.match-players{padding:16px;border-bottom:1px solid var(--border);}
+.match-vs{
+  display:flex;align-items:center;justify-content:space-between;
+}
+.match-player{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;}
+.match-player.right{align-items:flex-end;}
+.match-av-big{
+  width:48px;height:48px;border-radius:50%;background:var(--bg4);
+  border:2px solid var(--border2);display:flex;align-items:center;
+  justify-content:center;font-size:20px;font-weight:700;color:var(--acc);
+}
+.match-pname{font-size:14px;font-weight:700;}
+.match-pelo{font-size:12px;color:var(--text2);}
+.match-sep{display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;padding:0 12px;}
+.match-score-big{font-family:'Bebas Neue',sans-serif;font-size:40px;line-height:1;color:var(--text);}
+.match-score-sep{font-size:20px;color:var(--text3);}
+.match-status{font-size:10px;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;}
+.match-progress{height:2px;background:var(--bg4);margin:12px 0 0;border-radius:1px;overflow:hidden;}
+.match-progress-fill{height:100%;background:var(--acc);transition:width .4s;}
+
+.match-rounds{padding:8px 16px;}
+.round-item{
+  padding:8px 10px;border-radius:8px;display:flex;align-items:center;gap:8px;margin-bottom:4px;
+}
+.round-num{font-size:11px;font-weight:700;color:var(--text3);width:20px;}
+.round-res{
+  font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;
+}
+.round-win{background:rgba(0,232,122,.15);color:var(--green);}
+.round-loss{background:rgba(255,53,53,.15);color:var(--red);}
+.round-draw{background:rgba(136,136,136,.15);color:var(--text2);}
+.round-time{font-size:11px;color:var(--text3);margin-left:auto;font-family:'Space Mono',monospace;}
+
+/* MATCH GAME AREA */
+#game-area{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:30px;position:relative;
+}
+
+/* WAITING STATE */
+#waiting-state{
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+  text-align:center;
+}
+.wait-spinner{
+  width:40px;height:40px;border:3px solid rgba(232,255,0,.2);
+  border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.wait-title{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--text);}
+.wait-sub{font-size:13px;color:var(--text2);}
+
+/* COUNTDOWN */
+#countdown-state{
+  display:none;flex-direction:column;align-items:center;gap:8px;text-align:center;
+}
+.cd-num{
+  font-family:'Bebas Neue',sans-serif;font-size:120px;line-height:1;
+  color:var(--acc);text-shadow:0 0 60px rgba(232,255,0,.4);
+  animation:cdpop .3s ease;
+}
+@keyframes cdpop{from{transform:scale(1.4);opacity:0;}to{transform:scale(1);opacity:1;}}
+.cd-label{font-size:13px;color:var(--text2);letter-spacing:1px;text-transform:uppercase;}
+
+/* GAME STATE */
+#game-state{display:none;flex-direction:column;align-items:center;gap:24px;width:100%;max-width:600px;}
+
+.question-card{
+  width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:16px;
+  padding:32px;text-align:center;position:relative;
+}
+.question-mode-tag{
+  position:absolute;top:14px;left:16px;font-size:10px;font-weight:700;
+  color:var(--text3);letter-spacing:1px;text-transform:uppercase;
+}
+.question-round{
+  position:absolute;top:14px;right:16px;font-size:11px;font-weight:700;
+  color:var(--text3);font-family:'Space Mono',monospace;
+}
+.question-expr{
+  font-family:'Space Mono',monospace;font-size:clamp(28px,5vw,48px);
+  font-weight:700;color:var(--text);margin:8px 0 24px;
+  letter-spacing:2px;
+}
+.question-expr .op{color:var(--acc);}
+
+/* MULTIPLE CHOICE MODE */
+.mc-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;
+}
+.mc-btn{
+  padding:18px;background:var(--bg3);border:2px solid var(--border2);
+  border-radius:10px;font-family:'Space Mono',monospace;font-size:20px;
+  font-weight:700;color:var(--text);cursor:pointer;transition:all .15s;
+  font-family:'DM Sans',sans-serif;
+}
+.mc-btn:hover:not(:disabled){border-color:var(--acc);background:rgba(232,255,0,.06);color:var(--acc);}
+.mc-btn.correct{border-color:var(--green);background:rgba(0,232,122,.1);color:var(--green);}
+.mc-btn.wrong{border-color:var(--red);background:rgba(255,53,53,.1);color:var(--red);}
+.mc-btn:disabled{cursor:default;opacity:.7;}
+
+/* TYPE ANSWER MODE */
+.type-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;}
+.answer-display{
+  font-family:'Space Mono',monospace;font-size:48px;font-weight:700;
+  color:var(--acc);min-width:200px;text-align:center;min-height:60px;
+  border-bottom:3px solid var(--acc);padding-bottom:4px;
+  letter-spacing:4px;
+}
+.answer-display.empty{color:var(--text3);border-color:var(--border2);}
+.numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:260px;}
+.np-btn{
+  padding:16px;background:var(--bg3);border:1px solid var(--border2);
+  border-radius:10px;font-size:20px;font-weight:700;color:var(--text);
+  cursor:pointer;transition:all .12s;font-family:'Space Mono',monospace;
+}
+.np-btn:hover{background:var(--bg4);border-color:var(--acc);color:var(--acc);}
+.np-btn:active{transform:scale(.95);}
+.np-btn.del{font-size:16px;color:var(--text2);}
+.np-btn.submit{background:var(--acc);color:#000;border-color:var(--acc);font-size:14px;}
+.np-btn.submit:hover{background:var(--acc2);}
+
+/* SEQUENCE MODE */
+.seq-wrap{display:flex;flex-direction:column;align-items:center;gap:16px;width:100%;}
+.seq-steps{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:8px 0;}
+.seq-step{
+  background:var(--bg4);border:1px solid var(--border2);border-radius:8px;
+  padding:8px 14px;font-family:'Space Mono',monospace;font-size:14px;font-weight:700;
+}
+.seq-step.done{border-color:var(--green);color:var(--green);background:rgba(0,232,122,.08);}
+.seq-step.active{border-color:var(--acc);color:var(--acc);background:rgba(232,255,0,.08);}
+
+/* RIVAL STATUS */
+.rival-bar{
+  width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:12px 16px;display:flex;align-items:center;gap:12px;
+}
+.rival-av{
+  width:32px;height:32px;border-radius:50%;background:var(--bg4);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:var(--acc);
+}
+.rival-name{font-size:13px;font-weight:600;}
+.rival-status{font-size:12px;color:var(--text2);margin-left:auto;}
+.rival-progress-bar{
+  flex:1;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;
+}
+.rival-progress-fill{height:100%;background:var(--red);border-radius:2px;transition:width .3s;}
+
+/* TIMER BAR */
+.timer-bar{
+  width:100%;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;
+}
+.timer-fill{
+  height:100%;background:var(--acc);border-radius:3px;
+  transition:width .1s linear,background .3s;
+}
+.timer-fill.warn{background:#ff8800;}
+.timer-fill.danger{background:var(--red);}
+.timer-text{
+  font-family:'Space Mono',monospace;font-size:12px;font-weight:700;
+  color:var(--text2);margin-top:4px;
+}
+
+/* RESULT ═══ */
+#result-state{
+  display:none;flex-direction:column;align-items:center;gap:20px;text-align:center;
+}
+.result-title{font-family:'Bebas Neue',sans-serif;font-size:72px;line-height:1;}
+.result-title.win{color:var(--acc);}
+.result-title.loss{color:var(--red);}
+.result-elo{font-size:18px;font-weight:700;}
+.result-elo.pos{color:var(--green);}
+.result-elo.neg{color:var(--red);}
+.result-stats{
+  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:20px 32px;display:flex;gap:32px;
+}
+.result-stat{text-align:center;}
+.result-stat-val{font-family:'Space Mono',monospace;font-size:28px;font-weight:700;color:var(--text);}
+.result-stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
+
+/* PROFILE ═══ */
+.profile-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  padding:24px;display:flex;gap:20px;align-items:center;margin-bottom:20px;
+}
+.profile-av{
+  width:64px;height:64px;border-radius:50%;background:var(--bg4);
+  border:2px solid var(--border2);display:flex;align-items:center;
+  justify-content:center;font-size:28px;font-weight:700;color:var(--acc);flex-shrink:0;
+}
+.profile-info{flex:1;}
+.profile-name{font-size:22px;font-weight:700;margin-bottom:4px;}
+.profile-elo{font-family:'Bebas Neue',sans-serif;font-size:36px;color:var(--acc);line-height:1;}
+.profile-stats{display:flex;gap:20px;margin-top:10px;}
+.profile-stat{text-align:center;}
+.profile-stat-val{font-size:20px;font-weight:700;}
+.profile-stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;}
+
+.hist-row{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;
+  background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;
+}
+.hist-badge{
+  width:28px;height:28px;border-radius:6px;display:flex;align-items:center;
+  justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;
+}
+.hist-win{background:rgba(0,232,122,.15);color:var(--green);}
+.hist-loss{background:rgba(255,53,53,.15);color:var(--red);}
+.hist-vs{font-size:13px;font-weight:600;flex:1;}
+.hist-mode{font-size:11px;color:var(--text3);}
+.hist-sc{font-size:13px;font-weight:700;font-family:'Space Mono',monospace;color:var(--text2);}
+.hist-elo{font-size:13px;font-weight:700;}
+
+/* MODAL ═══ */
+.modal-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,.8);z-index:800;
+  display:flex;align-items:center;justify-content:center;
+}
+.modal-overlay.hidden{display:none;}
+.modal{
+  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  padding:24px;width:340px;display:flex;flex-direction:column;gap:14px;
+}
+.modal-title{font-size:16px;font-weight:700;}
+.modal-select{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:8px;
+  padding:10px 14px;font-size:14px;color:var(--text);outline:none;
+  font-family:'DM Sans',sans-serif;cursor:pointer;
+}
+.modal-btns{display:flex;gap:8px;}
+.modal-btn-ok{flex:1;padding:10px;background:var(--acc);border:none;border-radius:8px;font-size:13px;font-weight:700;color:#000;cursor:pointer;font-family:'DM Sans',sans-serif;}
+.modal-btn-cancel{flex:1;padding:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer;font-family:'DM Sans',sans-serif;}
+
+/* NOTIFICATIONS ═══ */
+#notif{
+  position:fixed;top:60px;right:16px;z-index:2000;
+  display:flex;flex-direction:column;gap:8px;pointer-events:none;
+}
+.notif-item{
+  background:var(--bg2);border:1px solid var(--border2);border-radius:10px;
+  padding:10px 16px;font-size:13px;font-weight:600;
+  animation:notifIn .2s ease;min-width:200px;
+}
+.notif-item.notif-ok{border-color:var(--green);color:var(--green);}
+.notif-item.notif-err{border-color:var(--red);color:var(--red);}
+.notif-item.notif-info{border-color:var(--acc);color:var(--acc);}
+@keyframes notifIn{from{transform:translateX(100%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="logo" onclick="navTo('rooms')">MATH<span>BATTLE</span></div>
+    <div id="nav-tabs">
+      <div class="nav-tab active" data-page="rooms" onclick="navTo('rooms')">Лобби</div>
+      <div class="nav-tab" data-page="leaderboard" onclick="navTo('leaderboard')">Таблица</div>
+      <div class="nav-tab" data-page="profile" onclick="navTo('profile')">Профиль</div>
+    </div>
+    <div class="topbar-right">
+      <div class="ping-dot" id="ping-dot"></div>
+      <div class="user-chip" onclick="navTo('profile')">
+        <div class="user-chip-name" id="nav-username">—</div>
+        <div class="user-chip-elo" id="nav-elo">— ELO</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="body">
+    <!-- SIDEBAR: режимы -->
+    <div id="sidebar">
+      <div class="sidebar-sec">
+        <div class="sidebar-label">Режимы</div>
+        <div class="mode-card active" data-mode="arithmetic" onclick="selectMode('arithmetic')">
+          <div class="mode-icon" style="background:rgba(232,255,0,.1);">➕</div>
+          <div><div class="mode-name">Арифметика</div><div class="mode-sub">+−×÷ на скорость</div></div>
+        </div>
+        <div class="mode-card" data-mode="sequence" onclick="selectMode('sequence')">
+          <div class="mode-icon" style="background:rgba(53,128,255,.1);">🔢</div>
+          <div><div class="mode-name">Цепочка</div><div class="mode-sub">3+5×2−1=?</div></div>
+        </div>
+        <div class="mode-card" data-mode="multichoice" onclick="selectMode('multichoice')">
+          <div class="mode-icon" style="background:rgba(0,232,122,.1);">🎯</div>
+          <div><div class="mode-name">Выбор ответа</div><div class="mode-sub">4 варианта, 1 верный</div></div>
+        </div>
+        <div class="mode-card" data-mode="countdown" onclick="selectMode('countdown')">
+          <div class="mode-icon" style="background:rgba(255,53,53,.1);">⚡</div>
+          <div><div class="mode-name">Блиц</div><div class="mode-sub">10 задач, на время</div></div>
+        </div>
+      </div>
+      <div class="sidebar-sec" style="flex:1;overflow-y:auto;">
+        <div class="sidebar-label">Открытые комнаты</div>
+        <div id="sidebar-rooms-list"></div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div id="main">
+      <div id="content">
+        <!-- ROOMS -->
+        <div class="page active" id="page-rooms">
+          <div class="page-header">
+            <div class="page-title">ЛОББИ</div>
+            <button class="btn btn-acc" onclick="openCreateRoom()">+ Создать матч</button>
+          </div>
+          <div class="rooms-grid" id="rooms-list">
+            <div style="color:var(--text3);font-size:13px;padding:20px 0;text-align:center;">Загрузка...</div>
+          </div>
+        </div>
+
+        <!-- LEADERBOARD -->
+        <div class="page" id="page-leaderboard">
+          <div class="page-header">
+            <div class="page-title">ТАБЛИЦА ЛИДЕРОВ</div>
+          </div>
+          <div class="lb-wrap">
+            <div class="lb-header">
+              <div>#</div><div>Игрок</div><div>ЭЛО</div><div>W</div><div>L</div><div>W/R</div>
+            </div>
+            <div id="lb-body"></div>
+          </div>
+        </div>
+
+        <!-- PROFILE -->
+        <div class="page" id="page-profile">
+          <div class="page-title" style="margin-bottom:16px;">ПРОФИЛЬ</div>
+          <div class="profile-card">
+            <div class="profile-av" id="prof-av">?</div>
+            <div class="profile-info">
+              <div class="profile-name" id="prof-name">—</div>
+              <div class="profile-elo" id="prof-elo">—</div>
+              <div class="profile-stats">
+                <div class="profile-stat"><div class="profile-stat-val" id="prof-wins">0</div><div class="profile-stat-label">Победы</div></div>
+                <div class="profile-stat"><div class="profile-stat-val" id="prof-losses">0</div><div class="profile-stat-label">Поражения</div></div>
+                <div class="profile-stat"><div class="profile-stat-val" id="prof-wr">—</div><div class="profile-stat-label">Винрейт</div></div>
+              </div>
+            </div>
+          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px;">ПОСЛЕДНИЕ МАТЧИ</div>
+          <div id="prof-hist"></div>
+          <div style="margin-top:16px;">
+            <button class="btn btn-red" onclick="logout()">Выйти</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHAT -->
+    <div id="chat-panel">
+      <div class="chat-header">
+        <div class="chat-dot"></div>
+        GLOBAL CHAT
+      </div>
+      <div id="chat-messages"></div>
+      <div class="chat-input-wrap">
+        <input class="chat-input" id="chat-inp" placeholder="Написать..." maxlength="100"
+          onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="chat-send" onclick="sendChat()">↑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MATCH OVERLAY -->
+<div id="match-overlay" class="hidden">
+  <div id="match-topbar">
+    <div class="match-logo">MATHBATTLE</div>
+    <div class="match-mode-tag" id="match-mode-tag">—</div>
+    <div style="margin-left:auto;display:flex;gap:8px;">
+      <button class="btn btn-red" onclick="leaveMatch()" style="padding:6px 14px;font-size:12px;">✕ Покинуть</button>
+    </div>
+  </div>
+  <div id="match-body">
+    <!-- LEFT PANEL -->
+    <div id="match-panel">
+      <div class="match-players">
+        <div class="match-vs">
+          <div class="match-player">
+            <div class="match-av-big" id="m-av-host">H</div>
+            <div class="match-pname" id="m-name-host">—</div>
+            <div class="match-pelo" id="m-elo-host">—</div>
+          </div>
+          <div class="match-sep">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div class="match-score-big" id="m-score-host">0</div>
+              <div class="match-score-sep">:</div>
+              <div class="match-score-big" id="m-score-guest">0</div>
+            </div>
+            <div class="match-status" id="m-status">ОЖИДАНИЕ</div>
+          </div>
+          <div class="match-player right">
+            <div class="match-av-big" id="m-av-guest">G</div>
+            <div class="match-pname" id="m-name-guest">—</div>
+            <div class="match-pelo" id="m-elo-guest">—</div>
+          </div>
+        </div>
+        <div class="match-progress"><div class="match-progress-fill" id="m-prog" style="width:0%"></div></div>
+      </div>
+      <div class="match-rounds" id="match-rounds">
+        <div style="padding:8px;text-align:center;color:var(--text3);font-size:12px;">Раунды появятся здесь</div>
+      </div>
+    </div>
+
+    <!-- GAME AREA -->
+    <div id="game-area">
+      <!-- WAITING -->
+      <div id="waiting-state">
+        <div class="wait-spinner"></div>
+        <div class="wait-title">ЖДЁМ СОПЕРНИКА</div>
+        <div class="wait-sub" id="waiting-sub">Комната создана. Жди...</div>
+      </div>
+
+      <!-- COUNTDOWN -->
+      <div id="countdown-state">
+        <div class="cd-label">Игра начнётся через</div>
+        <div class="cd-num" id="cd-num">3</div>
+      </div>
+
+      <!-- GAME -->
+      <div id="game-state">
+        <div style="width:100%;max-width:600px;">
+          <!-- Timer -->
+          <div class="timer-bar"><div class="timer-fill" id="timer-fill"></div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px;margin-bottom:16px;">
+            <div class="timer-text" id="timer-text">10.0s</div>
+            <div style="font-size:11px;font-weight:700;color:var(--text3);">Раунд <span id="round-num">1</span>/10</div>
+          </div>
+        </div>
+
+        <!-- Question card -->
+        <div class="question-card" style="width:100%;max-width:600px;">
+          <div class="question-mode-tag" id="q-mode-tag">—</div>
+          <div class="question-round" id="q-round">1/10</div>
+          <div class="question-expr" id="q-expr">—</div>
+          <!-- Answer area injected here -->
+          <div id="answer-area"></div>
+        </div>
+
+        <!-- Rival bar -->
+        <div class="rival-bar" style="width:100%;max-width:600px;" id="rival-bar">
+          <div class="rival-av" id="rival-av">?</div>
+          <div style="flex:1;">
+            <div class="rival-name" id="rival-name">Соперник</div>
+            <div class="rival-progress-bar"><div class="rival-progress-fill" id="rival-prog" style="width:0%"></div></div>
+          </div>
+          <div class="rival-status" id="rival-status">думает...</div>
+        </div>
+      </div>
+
+      <!-- RESULT -->
+      <div id="result-state">
+        <div class="result-title" id="result-title">—</div>
+        <div class="result-elo" id="result-elo">—</div>
+        <div class="result-stats">
+          <div class="result-stat">
+            <div class="result-stat-val" id="result-correct">—</div>
+            <div class="result-stat-label">Верных</div>
+          </div>
+          <div class="result-stat">
+            <div class="result-stat-val" id="result-speed">—</div>
+            <div class="result-stat-label">Avg скорость</div>
+          </div>
+          <div class="result-stat">
+            <div class="result-stat-val" id="result-rounds-won">—</div>
+            <div class="result-stat-label">Раундов</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-acc" onclick="leaveMatch()">← В лобби</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AUTH -->
+<div id="auth-overlay">
+  <div class="auth-box">
+    <div class="auth-logo">MATH<span>BATTLE</span></div>
+    <div style="font-size:13px;color:var(--text2);">PvP математические дуэли</div>
+    <div class="auth-tabs" id="auth-tabs">
+      <div class="auth-tab active" onclick="authTab('login')">Войти</div>
+      <div class="auth-tab" onclick="authTab('reg')">Регистрация</div>
+    </div>
+    <div id="auth-login" style="display:flex;flex-direction:column;gap:10px;">
+      <input class="auth-inp" id="l-user" type="text" placeholder="Никнейм" maxlength="16">
+      <input class="auth-inp" id="l-pass" type="password" placeholder="Пароль">
+      <div class="auth-err" id="l-err"></div>
+      <button class="btn btn-acc" onclick="doLogin()">Войти</button>
+    </div>
+    <div id="auth-reg" style="display:none;flex-direction:column;gap:10px;">
+      <input class="auth-inp" id="r-user" type="text" placeholder="Никнейм (3–16 символов)" maxlength="16">
+      <input class="auth-inp" id="r-pass" type="password" placeholder="Пароль (мин. 4 символа)">
+      <div class="auth-err" id="r-err"></div>
+      <button class="btn btn-acc" id="r-btn" onclick="doRegister()">Создать аккаунт</button>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE ROOM MODAL -->
+<div class="modal-overlay hidden" id="create-modal">
+  <div class="modal">
+    <div class="modal-title">Создать матч</div>
+    <div style="font-size:12px;color:var(--text2);">Режим игры</div>
+    <select class="modal-select" id="modal-mode">
+      <option value="arithmetic">➕ Арифметика — +−×÷ на скорость</option>
+      <option value="sequence">🔢 Цепочка — порядок действий</option>
+      <option value="multichoice">🎯 Выбор ответа — 4 варианта</option>
+      <option value="countdown">⚡ Блиц — 10 задач на время</option>
+    </select>
+    <div style="font-size:12px;color:var(--text2);">Сложность</div>
+    <select class="modal-select" id="modal-diff">
+      <option value="easy">🟢 Лёгкая (числа до 20)</option>
+      <option value="medium" selected>🟡 Средняя (числа до 100)</option>
+      <option value="hard">🔴 Сложная (числа до 1000)</option>
+    </select>
+    <div class="modal-btns">
+      <button class="modal-btn-cancel" onclick="closeCreateRoom()">Отмена</button>
+      <button class="modal-btn-ok" onclick="doCreateRoom()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<div id="notif"></div>
+
+<script>
+// ════════════════════════════════════════
+// SUPABASE
+// ════════════════════════════════════════
+const SB_URL='https://ppxqgezdihdlfngnxegm.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBweHFnZXpkaWhkbGZuZ254ZWdtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyOTc0NDcsImV4cCI6MjA4OTg3MzQ0N30._izNBj5KQ0epUSvN9lOqVyfIWLdXUvC8trrVyB3A28E';
+const sb=supabase.createClient(SB_URL,SB_KEY);
+
+// ════════════════════════════════════════
+// HASH
+// ════════════════════════════════════════
+async function hashPw(pw){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(pw));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+// ════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════
+let me=null;
+let selectedMode='arithmetic';
+
+// ════════════════════════════════════════
+// NOTIFICATIONS
+// ════════════════════════════════════════
+function notif(msg,type='info'){
+  const el=document.createElement('div');
+  el.className=`notif-item notif-${type}`;
+  el.textContent=msg;
+  document.getElementById('notif').appendChild(el);
+  setTimeout(()=>el.remove(),3000);
+}
+
+// ════════════════════════════════════════
+// AUTH
+// ════════════════════════════════════════
+function authTab(t){
+  document.querySelectorAll('.auth-tab').forEach((el,i)=>el.classList.toggle('active',i===(t==='login'?0:1)));
+  document.getElementById('auth-login').style.display=t==='login'?'flex':'none';
+  document.getElementById('auth-reg').style.display=t==='reg'?'flex':'none';
+}
+
+async function doLogin(){
+  const u=document.getElementById('l-user').value.trim();
+  const p=document.getElementById('l-pass').value;
+  const err=document.getElementById('l-err');
+  err.textContent='';
+  if(!u||!p){err.textContent='Заполни все поля';return;}
+  const hash=await hashPw(p);
+  const{data,error}=await sb.from('mb_players').select('*').eq('username',u).eq('password_hash',hash).single();
+  if(error||!data){err.textContent='Неверный ник или пароль';return;}
+  me=data;saveLocal();onLoggedIn();
+}
+
+async function doRegister(){
+  const u=document.getElementById('r-user').value.trim();
+  const p=document.getElementById('r-pass').value;
+  const err=document.getElementById('r-err');
+  err.textContent='';
+  if(u.length<3){err.textContent='Ник минимум 3 символа';return;}
+  if(p.length<4){err.textContent='Пароль минимум 4 символа';return;}
+  if(!/^[a-zA-Zа-яА-Я0-9_]+$/.test(u)){err.textContent='Только буквы, цифры, _';return;}
+  document.getElementById('r-btn').disabled=true;
+  const hash=await hashPw(p);
+  const{data,error}=await sb.from('mb_players').insert({username:u,password_hash:hash}).select().single();
+  if(error){
+    if(error.code==='23505') err.textContent='Ник уже занят';
+    else if(error.code==='42P01') err.textContent='❗ Создай таблицы в Supabase SQL Editor';
+    else err.textContent=error.message;
+    document.getElementById('r-btn').disabled=false;return;
+  }
+  me=data;saveLocal();onLoggedIn();
+}
+
+function saveLocal(){localStorage.setItem('mb_player',JSON.stringify(me));}
+function loadLocal(){try{return JSON.parse(localStorage.getItem('mb_player'));}catch{return null;}}
+
+async function onLoggedIn(){
+  const{data}=await sb.from('mb_players').select('*').eq('id',me.id).single();
+  if(data)me=data;
+  document.getElementById('auth-overlay').classList.add('hidden');
+  updateHUD();navTo('rooms');
+  loadRooms();loadLeaderboard();loadProfile();
+  initChat();
+}
+
+function logout(){localStorage.removeItem('mb_player');me=null;document.getElementById('auth-overlay').classList.remove('hidden');}
+
+async function checkAutoLogin(){
+  const saved=loadLocal();if(!saved)return;
+  const{data}=await sb.from('mb_players').select('*').eq('id',saved.id).single();
+  if(data){me=data;onLoggedIn();}else localStorage.removeItem('mb_player');
+}
+
+// ════════════════════════════════════════
+// HUD
+// ════════════════════════════════════════
+function updateHUD(){
+  if(!me)return;
+  document.getElementById('nav-username').textContent=me.username;
+  document.getElementById('nav-elo').textContent=me.elo+' ELO';
+}
+
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// ════════════════════════════════════════
+// NAVIGATION
+// ════════════════════════════════════════
+function navTo(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.querySelectorAll('.nav-tab').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
+  if(page==='leaderboard')loadLeaderboard();
+  if(page==='profile')loadProfile();
+  if(page==='rooms')loadRooms();
+}
+
+function selectMode(mode){
+  selectedMode=mode;
+  document.querySelectorAll('.mode-card').forEach(el=>el.classList.toggle('active',el.dataset.mode===mode));
+}
+
+// ════════════════════════════════════════
+// ROOMS
+// ════════════════════════════════════════
+const MODES={
+  arithmetic:{name:'Арифметика',icon:'➕'},
+  sequence:{name:'Цепочка',icon:'🔢'},
+  multichoice:{name:'Выбор',icon:'🎯'},
+  countdown:{name:'Блиц',icon:'⚡'},
+};
+
+let roomsSub=null;
+async function loadRooms(){
+  const{data}=await sb.from('mb_rooms').select('*').order('created_at',{ascending:false}).limit(30);
+  renderRooms(data||[]);
+  if(roomsSub)roomsSub.unsubscribe();
+  roomsSub=sb.channel('mb-rooms-list').on('postgres_changes',{event:'*',schema:'public',table:'mb_rooms'},()=>loadRooms()).subscribe();
+}
+
+function renderRooms(rooms){
+  const m=MODES;
+  const active=rooms.filter(r=>r.status==='waiting');
+  const playing=rooms.filter(r=>r.status==='playing');
+  const all=[...active,...playing];
+
+  // Main list
+  const el=document.getElementById('rooms-list');
+  if(!all.length){el.innerHTML='<div style="color:var(--text3);font-size:13px;padding:30px 0;text-align:center;">Нет открытых матчей. Создай первый!</div>';return;}
+  el.innerHTML=all.map(r=>`
+    <div class="room-card" onclick="joinRoom('${r.id}')">
+      <div class="room-mode-badge">${(m[r.mode]||m.arithmetic).icon}</div>
+      <div class="room-info">
+        <div class="room-host">${esc(r.host_username||'?')} <span style="color:var(--text3);font-weight:400;font-size:12px;">vs ${r.guest_username?esc(r.guest_username):'???'}</span></div>
+        <div class="room-sub">${(m[r.mode]||m.arithmetic).name} · ${r.difficulty||'medium'} · ${r.host_elo||1000} ELO</div>
+      </div>
+      <div class="room-status ${r.status==='waiting'?'s-waiting':'s-playing'}">${r.status==='waiting'?'ЖДЁТ':'В ИГРЕ'}</div>
+    </div>
+  `).join('');
+
+  // Sidebar mini list
+  const sel=document.getElementById('sidebar-rooms-list');
+  if(!active.length){sel.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center;padding:8px;">Нет комнат</div>';return;}
+  sel.innerHTML=active.map(r=>`
+    <div onclick="joinRoom('${r.id}')" style="padding:8px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:4px;border:1px solid var(--border);transition:border-color .15s;" onmouseover="this.style.borderColor='var(--acc)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="font-size:16px;">${(m[r.mode]||m.arithmetic).icon}</span>
+      <div style="min-width:0;"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.host_username||'?')}</div><div style="font-size:10px;color:var(--text3);">${(m[r.mode]||m.arithmetic).name}</div></div>
+    </div>
+  `).join('');
+}
+
+function openCreateRoom(){
+  if(!me){notif('Войди в аккаунт','err');return;}
+  document.getElementById('create-modal').classList.remove('hidden');
+}
+function closeCreateRoom(){document.getElementById('create-modal').classList.add('hidden');}
+
+async function doCreateRoom(){
+  if(!me)return;
+  const mode=document.getElementById('modal-mode').value;
+  const difficulty=document.getElementById('modal-diff').value;
+  closeCreateRoom();
+  const roomId=Math.random().toString(36).slice(2,10);
+  const{error}=await sb.from('mb_rooms').insert({
+    id:roomId,mode,difficulty,
+    host_id:me.id,host_username:me.username,host_elo:me.elo,
+    status:'waiting'
+  });
+  if(error){notif('Ошибка: '+error.message,'err');return;}
+  openMatch(roomId,true);
+}
+
+async function joinRoom(roomId){
+  if(!me){notif('Войди в аккаунт','err');return;}
+  const{data:room}=await sb.from('mb_rooms').select('*').eq('id',roomId).single();
+  if(!room)return;
+  if(room.host_id===me.id){openMatch(roomId,true);return;}
+  if(room.status!=='waiting'){notif('Комната уже занята','err');return;}
+  await sb.from('mb_rooms').update({
+    guest_id:me.id,guest_username:me.username,guest_elo:me.elo,status:'playing'
+  }).eq('id',roomId);
+  openMatch(roomId,false);
+}
+
+// ════════════════════════════════════════
+// LEADERBOARD
+// ════════════════════════════════════════
+async function loadLeaderboard(){
+  const{data}=await sb.from('mb_players').select('id,username,elo,wins,losses').order('elo',{ascending:false}).limit(50);
+  const tbody=document.getElementById('lb-body');
+  if(!data||!data.length){tbody.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);">Пусто</div>';return;}
+  tbody.innerHTML=data.map((p,i)=>{
+    const wr=p.wins+p.losses>0?Math.round(p.wins/(p.wins+p.losses)*100):0;
+    const rClass=i===0?'r1':i===1?'r2':i===2?'r3':'';
+    const isMe=me&&p.id===me.id;
+    return `<div class="lb-row${isMe?' me':''}">
+      <div class="lb-rank ${rClass}">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</div>
+      <div class="lb-name-cell"><div class="lb-av">${p.username[0].toUpperCase()}</div><div>${esc(p.username)}${isMe?' <span style="color:var(--acc);font-size:10px">(ты)</span>':''}</div></div>
+      <div class="lb-elo">${p.elo}</div>
+      <div style="color:var(--green)">${p.wins}</div>
+      <div style="color:var(--red)">${p.losses}</div>
+      <div class="lb-wr" style="color:${wr>=60?'var(--green)':wr>=40?'var(--text)':'var(--red)'}">${wr}%</div>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════
+// PROFILE
+// ════════════════════════════════════════
+async function loadProfile(){
+  if(!me)return;
+  const{data}=await sb.from('mb_players').select('*').eq('id',me.id).single();
+  if(data){me=data;saveLocal();}
+  updateHUD();
+  document.getElementById('prof-av').textContent=me.username[0].toUpperCase();
+  document.getElementById('prof-name').textContent=me.username;
+  document.getElementById('prof-elo').textContent=me.elo+' ELO';
+  document.getElementById('prof-wins').textContent=me.wins;
+  document.getElementById('prof-losses').textContent=me.losses;
+  const wr=me.wins+me.losses>0?Math.round(me.wins/(me.wins+me.losses)*100):0;
+  document.getElementById('prof-wr').textContent=wr+'%';
+  const{data:hist}=await sb.from('mb_matches').select('*').or(`winner_id.eq.${me.id},loser_id.eq.${me.id}`).order('played_at',{ascending:false}).limit(20);
+  const hel=document.getElementById('prof-hist');
+  if(!hist||!hist.length){hel.innerHTML='<div style="color:var(--text3);font-size:13px;padding:16px 0;">Нет матчей</div>';return;}
+  hel.innerHTML=hist.map(m=>{
+    const win=m.winner_id===me.id;
+    const opp=win?m.loser_username:m.winner_username;
+    const sc=win?`${m.score_winner}:${m.score_loser}`:`${m.score_loser}:${m.score_winner}`;
+    const elo=win?`+${m.elo_change}`:`-${m.elo_change}`;
+    const mode=MODES[m.mode]||MODES.arithmetic;
+    const d=new Date(m.played_at).toLocaleDateString('ru',{day:'numeric',month:'short'});
+    return `<div class="hist-row">
+      <div class="hist-badge ${win?'hist-win':'hist-loss'}">${win?'W':'L'}</div>
+      <div><div class="hist-vs">vs <b>${esc(opp)}</b></div><div class="hist-mode">${mode.icon} ${mode.name}</div></div>
+      <div class="hist-sc">${sc}</div>
+      <div class="hist-elo ${win?'pos':'neg'}" style="color:${win?'var(--green)':'var(--red)'}">${elo}</div>
+      <div style="font-size:11px;color:var(--text3);margin-left:auto;">${d}</div>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════
+// CHAT
+// ════════════════════════════════════════
+function initChat(){
+  loadChatHistory();
+  sb.channel('mb-global-chat')
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'mb_chat'},({new:msg})=>{
+      appendChat(msg);
+    })
+    .subscribe(s=>{if(s==='SUBSCRIBED')document.getElementById('ping-dot').classList.add('ok');});
+}
+
+async function loadChatHistory(){
+  const{data}=await sb.from('mb_chat').select('*').order('created_at',{ascending:true}).limit(50);
+  (data||[]).forEach(appendChat);
+}
+
+function appendChat(msg){
+  const el=document.getElementById('chat-messages');
+  const div=document.createElement('div');
+  div.className='chat-msg';
+  div.innerHTML=`<span class="chat-msg-elo">[${msg.elo||1000}]</span><span class="chat-msg-user">${esc(msg.username)}:</span><span class="chat-msg-text">${esc(msg.message)}</span>`;
+  el.appendChild(div);
+  el.scrollTop=el.scrollHeight;
+  // Max 100 messages in DOM
+  while(el.children.length>100)el.removeChild(el.firstChild);
+}
+
+let lastChatTime=0;
+async function sendChat(){
+  if(!me){notif('Войди в аккаунт','err');return;}
+  const inp=document.getElementById('chat-inp');
+  const msg=inp.value.trim();
+  if(!msg)return;
+  // Rate limit: 1 сообщение в 1.5 сек
+  const now=Date.now();
+  if(now-lastChatTime<1500){notif('Подожди немного','err');return;}
+  lastChatTime=now;
+  // Фильтр мата (базовый)
+  inp.value='';
+  await sb.from('mb_chat').insert({player_id:me.id,username:me.username,elo:me.elo,message:msg});
+}
+
+// ════════════════════════════════════════
+// QUESTION GENERATORS
+// ════════════════════════════════════════
+function getRandNum(diff){
+  if(diff==='easy')return Math.floor(Math.random()*20)+1;
+  if(diff==='hard')return Math.floor(Math.random()*1000)+1;
+  return Math.floor(Math.random()*100)+1;
+}
+
+function genArithmetic(diff){
+  const ops=['+','-','×','÷'];
+  const op=ops[Math.floor(Math.random()*ops.length)];
+  let a=getRandNum(diff),b=getRandNum(diff),ans;
+  if(op==='-'&&b>a)[a,b]=[b,a];
+  if(op==='÷'){
+    // Гарантируем целое деление
+    b=Math.max(1,b%10||1);
+    a=b*(Math.floor(Math.random()*10)+1);
+  }
+  if(op==='+')ans=a+b;
+  else if(op==='-')ans=a-b;
+  else if(op==='×')ans=a*b;
+  else ans=a/b;
+  return{expr:`${a} ${op} ${b}`,ans,op,a,b};
+}
+
+function genSequence(diff){
+  // Генерируем выражение типа a+b×c-d с правильным порядком действий
+  const a=getRandNum(diff),b=getRandNum(diff);
+  const c=Math.floor(Math.random()*10)+1;
+  const d=Math.floor(Math.random()*20)+1;
+  const ops=['+','-'];
+  const op1=ops[Math.floor(Math.random()*2)];
+  const op2=ops[Math.floor(Math.random()*2)];
+  const mult=Math.floor(Math.random()*9)+2;
+  // expr: a op1 b×mult op2 d
+  const bc=b*mult;
+  let ans;
+  if(op1==='+')ans=a+bc;else ans=a-bc;
+  if(op2==='+')ans+=d;else ans-=d;
+  return{expr:`${a} ${op1} ${b} × ${mult} ${op2} ${d}`,ans};
+}
+
+function genMultiChoice(diff){
+  const q=genArithmetic(diff);
+  const correct=q.ans;
+  const choices=new Set([correct]);
+  while(choices.size<4){
+    const delta=Math.floor(Math.random()*10)+1;
+    choices.add(correct+(Math.random()>0.5?delta:-delta));
+  }
+  const arr=Array.from(choices).sort(()=>Math.random()-.5);
+  return{...q,choices:arr};
+}
+
+function genQuestion(mode,diff){
+  if(mode==='sequence')return genSequence(diff);
+  if(mode==='multichoice')return genMultiChoice(diff);
+  return genArithmetic(diff);
+}
+
+// Генерирует набор вопросов с сидом (чтобы у обоих одинаковые)
+function genRounds(mode,diff,seed,count=10){
+  // Simple seeded PRNG
+  let s=seed;
+  function rand(){s=((s*1664525+1013904223)&0xffffffff)>>>0;return s/0xffffffff;}
+  function randInt(max){return Math.floor(rand()*max)+1;}
+
+  const questions=[];
+  for(let i=0;i<count;i++){
+    if(mode==='sequence'){
+      const a=randInt(diff==='easy'?10:diff==='hard'?200:50);
+      const b=randInt(diff==='easy'?5:diff==='hard'?50:20);
+      const mult=randInt(9)+1;
+      const d=randInt(diff==='easy'?10:diff==='hard'?100:30);
+      const op1=rand()>.5?'+':'-';
+      const op2=rand()>.5?'+':'-';
+      const bc=b*mult;
+      let ans=op1==='+'?a+bc:a-bc;
+      ans=op2==='+'?ans+d:ans-d;
+      questions.push({expr:`${a} ${op1} ${b} × ${mult} ${op2} ${d}`,ans});
+    } else if(mode==='multichoice'){
+      const ops=['+','-','×'];
+      const opIdx=Math.floor(rand()*3);
+      const op=ops[opIdx];
+      let a=randInt(diff==='easy'?15:diff==='hard'?100:50);
+      let b=randInt(diff==='easy'?10:diff==='hard'?50:25);
+      if(op==='-'&&b>a){const t=a;a=b;b=t;}
+      const ans=op==='+'?a+b:op==='-'?a-b:a*b;
+      const choices=new Set([ans]);
+      while(choices.size<4){
+        const delta=Math.floor(rand()*Math.max(5,Math.abs(ans)*0.3))+1;
+        choices.add(ans+(rand()>.5?delta:-delta));
+      }
+      const arr=Array.from(choices).sort(()=>rand()-.5);
+      questions.push({expr:`${a} ${op} ${b}`,ans,choices:arr});
+    } else {
+      const ops=['+','-','×','÷'];
+      const opIdx=Math.floor(rand()*4);
+      const op=ops[opIdx];
+      let a=randInt(diff==='easy'?20:diff==='hard'?500:100);
+      let b=randInt(diff==='easy'?10:diff==='hard'?50:20);
+      if(op==='-'&&b>a){const t=a;a=b;b=t;}
+      let ans;
+      if(op==='÷'){b=Math.max(1,Math.floor(rand()*9)+2);a=b*(Math.floor(rand()*15)+1);ans=a/b;}
+      else ans=op==='+'?a+b:op==='-'?a-b:a*b;
+      questions.push({expr:`${a} ${op} ${b}`,ans});
+    }
+  }
+  return questions;
+}
+
+// ════════════════════════════════════════
+// MATCH FLOW
+// ════════════════════════════════════════
+let matchRoomId=null,isHost=false,matchSub=null,roomWatchSub=null;
+let matchMode='arithmetic',matchDiff='medium';
+let hostUsername='',guestUsername='',hostElo=1000,guestElo=1000;
+let hostScore=0,guestScore=0;
+let rounds=[];
+let currentRound=0;
+let roundResults=[];
+let questionStartTime=0;
+let currentQuestion=null;
+let myAnswer=null;
+let rivalAnswer=null;
+let roundTimer=null;
+let answerLocked=false;
+let currentInput='';
+const ROUNDS_TO_WIN=6; // Первый кто выиграет 6 раундов из 10
+const ROUND_TIME=12; // секунд на вопрос
+const TOTAL_ROUNDS=10;
+
+async function openMatch(roomId,host){
+  matchRoomId=roomId;isHost=host;
+  const{data:room}=await sb.from('mb_rooms').select('*').eq('id',roomId).single();
+  if(!room)return;
+  matchMode=room.mode||'arithmetic';
+  matchDiff=room.difficulty||'medium';
+  hostUsername=room.host_username||'?';
+  guestUsername=room.guest_username||'...';
+  hostElo=room.host_elo||1000;guestElo=room.guest_elo||1000;
+  hostScore=0;guestScore=0;roundResults=[];currentRound=0;
+
+  document.getElementById('match-overlay').classList.remove('hidden');
+  updateMatchPanel();
+  document.getElementById('match-mode-tag').textContent=(MODES[matchMode]||MODES.arithmetic).name.toUpperCase();
+  showState('waiting');
+  if(room.status==='playing'&&room.guest_id&&isHost){
+    // Оба уже есть, запускаем
+    subscribeAndStart();
+  } else {
+    subscribeAndWait();
+  }
+}
+
+function updateMatchPanel(){
+  document.getElementById('m-name-host').textContent=hostUsername;
+  document.getElementById('m-name-guest').textContent=guestUsername;
+  document.getElementById('m-elo-host').textContent=hostElo+' ELO';
+  document.getElementById('m-elo-guest').textContent=guestElo+' ELO';
+  document.getElementById('m-av-host').textContent=hostUsername[0]?.toUpperCase()||'H';
+  document.getElementById('m-av-guest').textContent=(guestUsername[0]||'?').toUpperCase();
+  document.getElementById('m-score-host').textContent=hostScore;
+  document.getElementById('m-score-guest').textContent=guestScore;
+  const prog=Math.round(Math.max(hostScore,guestScore)/ROUNDS_TO_WIN*100);
+  document.getElementById('m-prog').style.width=prog+'%';
+  document.getElementById('rival-name').textContent=isHost?guestUsername:hostUsername;
+  document.getElementById('rival-av').textContent=isHost?(guestUsername[0]||'?').toUpperCase():hostUsername[0]?.toUpperCase()||'H';
+}
+
+function showState(state){
+  document.getElementById('waiting-state').style.display=state==='waiting'?'flex':'none';
+  document.getElementById('countdown-state').style.display=state==='countdown'?'flex':'none';
+  document.getElementById('game-state').style.display=state==='game'?'flex':'none';
+  document.getElementById('result-state').style.display=state==='result'?'flex':'none';
+}
+
+function subscribeAndWait(){
+  if(matchSub)matchSub.unsubscribe();
+  matchSub=sb.channel('mb-game:'+matchRoomId,{config:{broadcast:{self:false,ack:false}}});
+  matchSub
+    .on('broadcast',{event:'guest_joined'},({payload})=>{
+      if(!isHost)return;
+      guestUsername=payload.username;guestElo=payload.elo;
+      updateMatchPanel();
+      subscribeAndStart();
+    })
+    .on('broadcast',{event:'round_answer'},({payload})=>onRivalAnswer(payload))
+    .on('broadcast',{event:'match_end'},({payload})=>onMatchEnd(payload))
+    .subscribe(status=>{
+      if(status==='SUBSCRIBED'){
+        if(!isHost){
+          matchSub.send({type:'broadcast',event:'guest_joined',payload:{username:me.username,elo:me.elo}});
+          subscribeAndStart();
+        }
+      }
+    });
+
+  // Postgres watch для случая если хост уже в лобби
+  if(roomWatchSub)roomWatchSub.unsubscribe();
+  roomWatchSub=sb.channel('mb-room-watch:'+matchRoomId)
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'mb_rooms',filter:`id=eq.${matchRoomId}`},async ({new:room})=>{
+      if(room.guest_id&&room.status==='playing'){
+        guestUsername=room.guest_username||'?';guestElo=room.guest_elo||1000;
+        updateMatchPanel();
+      }
+    }).subscribe();
+}
+
+function subscribeAndStart(){
+  // Если уже подписаны — просто запускаем
+  if(!matchSub||matchSub._state!=='attached'){
+    subscribeAndWait();
+    setTimeout(startCountdown,800);
+    return;
+  }
+  startCountdown();
+}
+
+function startCountdown(){
+  showState('countdown');
+  document.getElementById('m-status').textContent='СТАРТ';
+  let n=3;
+  document.getElementById('cd-num').textContent=n;
+  const t=setInterval(()=>{
+    n--;
+    if(n>0){
+      document.getElementById('cd-num').textContent=n;
+    } else {
+      clearInterval(t);
+      document.getElementById('cd-num').textContent='GO!';
+      setTimeout(startMatch,600);
+    }
+  },1000);
+}
+
+function startMatch(){
+  // Генерируем вопросы на основе roomId как seed (одинаковые у обоих)
+  const seed=matchRoomId.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  rounds=genRounds(matchMode,matchDiff,seed,TOTAL_ROUNDS);
+  currentRound=0;hostScore=0;guestScore=0;roundResults=[];
+  document.getElementById('m-status').textContent='ИДЁТ ИГРА';
+  updateMatchPanel();
+  showState('game');
+  nextRound();
+}
+
+function nextRound(){
+  if(currentRound>=TOTAL_ROUNDS||hostScore>=ROUNDS_TO_WIN||guestScore>=ROUNDS_TO_WIN){
+    endMatch();return;
+  }
+  myAnswer=null;rivalAnswer=null;answerLocked=false;currentInput='';
+  currentQuestion=rounds[currentRound];
+  document.getElementById('round-num').textContent=currentRound+1;
+  document.getElementById('q-round').textContent=`${currentRound+1}/${TOTAL_ROUNDS}`;
+  document.getElementById('q-mode-tag').textContent=(MODES[matchMode]||MODES.arithmetic).name;
+
+  // Render question
+  const expr=currentQuestion.expr;
+  document.getElementById('q-expr').innerHTML=formatExpr(expr);
+
+  // Render answer area
+  renderAnswerArea();
+
+  document.getElementById('rival-status').textContent='думает...';
+  document.getElementById('rival-prog').style.width='0%';
+
+  // Timer
+  startRoundTimer();
+  questionStartTime=Date.now();
+}
+
+function formatExpr(expr){
+  return expr.replace(/([+\-×÷])/g,'<span class="op"> $1 </span>');
+}
+
+function renderAnswerArea(){
+  const area=document.getElementById('answer-area');
+  if(matchMode==='multichoice'&&currentQuestion.choices){
+    area.innerHTML=`<div class="mc-grid" id="mc-grid">
+      ${currentQuestion.choices.map(c=>`<button class="mc-btn" onclick="submitMC(${c})">${c}</button>`).join('')}
+    </div>`;
+  } else {
+    // Numpad
+    area.innerHTML=`
+      <div class="type-wrap">
+        <div class="answer-display empty" id="ans-display">_</div>
+        <div class="numpad">
+          ${[7,8,9,4,5,6,1,2,3].map(n=>`<button class="np-btn" onclick="npPress(${n})">${n}</button>`).join('')}
+          <button class="np-btn" onclick="npPress('-')" style="font-size:24px;font-weight:900;">−</button>
+          <button class="np-btn" onclick="npPress(0)">0</button>
+          <button class="np-btn del" onclick="npDel()">⌫</button>
+        </div>
+        <button class="np-btn submit" onclick="submitTyped()" style="width:100%;margin-top:4px;">✓ ОТВЕТИТЬ</button>
+      </div>`;
+  }
+}
+
+function npPress(v){
+  if(answerLocked)return;
+  if(v==='-'&&currentInput.length===0){currentInput='-';}
+  else if(typeof v==='number'){currentInput+=v;}
+  updateAnsDisplay();
+}
+function npDel(){
+  if(answerLocked)return;
+  currentInput=currentInput.slice(0,-1);
+  updateAnsDisplay();
+}
+function updateAnsDisplay(){
+  const el=document.getElementById('ans-display');
+  if(!el)return;
+  if(currentInput===''||currentInput==='-'){el.textContent='_';el.classList.add('empty');}
+  else{el.textContent=currentInput;el.classList.remove('empty');}
+}
+
+function submitTyped(){
+  if(answerLocked||currentInput===''||currentInput==='-')return;
+  const val=parseInt(currentInput);
+  if(isNaN(val))return;
+  submitAnswer(val);
+}
+
+function submitMC(val){
+  if(answerLocked)return;
+  submitAnswer(val);
+}
+
+function submitAnswer(val){
+  if(answerLocked)return;
+  answerLocked=true;
+  const elapsed=(Date.now()-questionStartTime)/1000;
+  myAnswer={val,elapsed,correct:val===currentQuestion.ans};
+
+  // Визуал
+  if(matchMode==='multichoice'){
+    document.querySelectorAll('.mc-btn').forEach(btn=>{
+      const bval=parseInt(btn.textContent);
+      btn.disabled=true;
+      if(bval===currentQuestion.ans)btn.classList.add('correct');
+      else if(bval===val&&val!==currentQuestion.ans)btn.classList.add('wrong');
+    });
+  }
+
+  // Отправляем результат сопернику
+  if(matchSub){
+    matchSub.send({type:'broadcast',event:'round_answer',payload:{
+      correct:myAnswer.correct,elapsed,round:currentRound,isHost
+    }});
+  }
+
+  checkRoundDone();
+}
+
+function onRivalAnswer(payload){
+  if(payload.round!==currentRound)return;
+  rivalAnswer={correct:payload.correct,elapsed:payload.elapsed};
+  document.getElementById('rival-status').textContent=rivalAnswer.correct?'✓ Правильно!':'✗ Неверно';
+  document.getElementById('rival-prog').style.width='100%';
+  checkRoundDone();
+}
+
+function checkRoundDone(){
+  if(!myAnswer)return;
+  // Если есть оба ответа или таймаут — считаем раунд
+  if(myAnswer&&rivalAnswer){
+    clearRoundTimer();
+    setTimeout(()=>scoreRound(),600);
+  }
+}
+
+function scoreRound(){
+  const mOk=myAnswer?.correct||false;
+  const rOk=rivalAnswer?.correct||false;
+  const mTime=myAnswer?.elapsed||99;
+  const rTime=rivalAnswer?.elapsed||99;
+
+  let result; // 'win','loss','draw'
+  if(mOk&&!rOk)result='win';
+  else if(!mOk&&rOk)result='loss';
+  else if(mOk&&rOk){result=mTime<rTime?'win':'loss';}
+  else result='draw';
+
+  if(result==='win'){if(isHost)hostScore++;else guestScore++;}
+  else if(result==='loss'){if(isHost)guestScore++;else hostScore++;}
+  // draw: никто не получает очко
+
+  roundResults.push({round:currentRound+1,result,myTime:mTime,myCorrect:mOk});
+  updateMatchPanel();
+  updateRoundsList();
+
+  currentRound++;
+  setTimeout(nextRound,800);
+}
+
+function updateRoundsList(){
+  const el=document.getElementById('match-rounds');
+  el.innerHTML=roundResults.map(r=>`
+    <div class="round-item">
+      <div class="round-num">#${r.round}</div>
+      <div class="round-res ${r.result==='win'?'round-win':r.result==='loss'?'round-loss':'round-draw'}">${r.result==='win'?'WIN':r.result==='loss'?'LOSS':'DRAW'}</div>
+      <div class="round-time">${r.myCorrect?r.myTime.toFixed(1)+'s':'—'}</div>
+    </div>
+  `).join('');
+}
+
+// ════════════════════════════════════════
+// TIMER
+// ════════════════════════════════════════
+let timerInterval=null;
+function startRoundTimer(){
+  clearRoundTimer();
+  let remaining=ROUND_TIME;
+  const fill=document.getElementById('timer-fill');
+  const txt=document.getElementById('timer-text');
+  fill.style.width='100%';fill.className='timer-fill';
+
+  timerInterval=setInterval(()=>{
+    remaining-=0.1;
+    const pct=Math.max(0,(remaining/ROUND_TIME)*100);
+    fill.style.width=pct+'%';
+    txt.textContent=remaining.toFixed(1)+'s';
+    if(remaining<3)fill.className='timer-fill danger';
+    else if(remaining<6)fill.className='timer-fill warn';
+    if(remaining<=0){
+      clearRoundTimer();
+      if(!answerLocked){
+        // Время вышло — считаем неверным
+        submitAnswer(-999999);
+      }
+    }
+  },100);
+}
+function clearRoundTimer(){if(timerInterval){clearInterval(timerInterval);timerInterval=null;}}
+
+// ════════════════════════════════════════
+// END MATCH
+// ════════════════════════════════════════
+function endMatch(){
+  clearRoundTimer();
+  const iWon=isHost?(hostScore>guestScore):(guestScore>hostScore);
+  // Показываем результат
+  showResult(iWon);
+  // Хост записывает в БД
+  if(isHost){
+    const winnerIsHost=hostScore>guestScore;
+    saveMatchResult(winnerIsHost);
+    if(matchSub)matchSub.send({type:'broadcast',event:'match_end',payload:{winnerIsHost}});
+  }
+}
+
+function onMatchEnd(payload){
+  const iWon=isHost?payload.winnerIsHost:!payload.winnerIsHost;
+  showResult(iWon);
+}
+
+function showResult(iWon){
+  showState('result');
+  document.getElementById('result-title').textContent=iWon?'ПОБЕДА!':'ПОРАЖЕНИЕ';
+  document.getElementById('result-title').className=`result-title ${iWon?'win':'loss'}`;
+  const correct=roundResults.filter(r=>r.myCorrect).length;
+  const avgTime=roundResults.filter(r=>r.myCorrect).reduce((a,r)=>a+r.myTime,0)/(correct||1);
+  const roundsWon=roundResults.filter(r=>r.result==='win').length;
+  document.getElementById('result-correct').textContent=`${correct}/${TOTAL_ROUNDS}`;
+  document.getElementById('result-speed').textContent=correct?avgTime.toFixed(1)+'s':'—';
+  document.getElementById('result-rounds-won').textContent=`${roundsWon}/${TOTAL_ROUNDS}`;
+  document.getElementById('result-elo').textContent='...';
+}
+
+// ════════════════════════════════════════
+// ELO + SAVE
+// ════════════════════════════════════════
+function calcElo(wElo,lElo){
+  const K=32;const exp=1/(1+Math.pow(10,(lElo-wElo)/400));
+  return Math.round(K*(1-exp));
+}
+
+async function saveMatchResult(winnerIsHost){
+  const wId=winnerIsHost?me.id:null; // мы хост
+  const lId=winnerIsHost?null:me.id;
+  const wName=winnerIsHost?hostUsername:guestUsername;
+  const lName=winnerIsHost?guestUsername:hostUsername;
+  const wElo=winnerIsHost?hostElo:guestElo;
+  const lElo=winnerIsHost?guestElo:hostElo;
+  const change=calcElo(wElo,lElo);
+
+  // Победитель
+  const{data:winner}=await sb.from('mb_players').select('id,wins,elo').eq('username',wName).single();
+  if(winner)await sb.from('mb_players').update({elo:wElo+change,wins:(winner.wins||0)+1}).eq('id',winner.id);
+
+  // Проигравший
+  const{data:loser}=await sb.from('mb_players').select('id,losses,elo').eq('username',lName).single();
+  if(loser)await sb.from('mb_players').update({elo:Math.max(100,lElo-change),losses:(loser.losses||0)+1}).eq('id',loser.id);
+
+  // Матч
+  await sb.from('mb_matches').insert({
+    winner_id:winner?.id,loser_id:loser?.id,
+    winner_username:wName,loser_username:lName,
+    mode:matchMode,
+    score_winner:winnerIsHost?hostScore:guestScore,
+    score_loser:winnerIsHost?guestScore:hostScore,
+    elo_change:change
+  });
+
+  // Обновляем свои данные
+  const{data}=await sb.from('mb_players').select('*').eq('id',me.id).single();
+  if(data){me=data;saveLocal();updateHUD();}
+
+  const iWon=winnerIsHost;
+  document.getElementById('result-elo').textContent=iWon?`+${change} ELO`:`-${change} ELO`;
+  document.getElementById('result-elo').className=`result-elo ${iWon?'pos':'neg'}`;
+
+  // Удаляем комнату
+  await sb.from('mb_rooms').delete().eq('id',matchRoomId);
+}
+
+async function leaveMatch(){
+  clearRoundTimer();
+  if(matchSub){matchSub.unsubscribe();matchSub=null;}
+  if(roomWatchSub){roomWatchSub.unsubscribe();roomWatchSub=null;}
+  if(matchRoomId&&isHost)await sb.from('mb_rooms').delete().eq('id',matchRoomId);
+  else if(matchRoomId)await sb.from('mb_rooms').update({guest_id:null,guest_username:null,status:'waiting'}).eq('id',matchRoomId);
+  matchRoomId=null;
+  document.getElementById('match-overlay').classList.add('hidden');
+  navTo('rooms');loadRooms();loadProfile();
+}
+
+// ════════════════════════════════════════
+// KEYBOARD SUPPORT
+// ════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  if(!document.getElementById('game-state').style.display||document.getElementById('game-state').style.display==='none')return;
+  if(answerLocked)return;
+  if(matchMode==='multichoice')return;
+  if(e.key>='0'&&e.key<='9')npPress(parseInt(e.key));
+  else if(e.key==='-'&&currentInput.length===0)npPress('-');
+  else if(e.key==='Backspace')npDel();
+  else if(e.key==='Enter')submitTyped();
+});
+
+// ════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════
+checkAutoLogin();
+</script>
+</body>
+</html>
